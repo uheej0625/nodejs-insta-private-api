@@ -1,212 +1,294 @@
-const axios = require('axios');
+const Repository = require('../core/repository');
 const crypto = require('crypto');
-const { random } = require('lodash');
+const axios = require('axios');
 
-class Request {
+class AccountRepository extends Repository {
   constructor(client) {
-    this.client = client;
-    this.end$ = { complete: () => {} };
-    this.error$ = { complete: () => {} };
-    
-    // Create axios instance with default config
-    this.httpClient = axios.create({
-      baseURL: 'https://i.instagram.com/',
-      timeout: 30000,
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      }
-    });
+    super(client);
+    // Default max retries for any request
+    this.maxRetries = 3;
   }
 
-  signature(data) {
-    return crypto.createHmac('sha256', this.client.state.signatureKey)
-      .update(data)
-      .digest('hex');
-  }
-
-  sign(payload) {
-    const json = typeof payload === 'object' ? JSON.stringify(payload) : payload;
-    const signature = this.signature(json);
-    return {
-      ig_sig_key_version: this.client.state.signatureVersion,
-      signed_body: `${signature}.${json}`,
-    };
-  }
-
-  userBreadcrumb(size) {
-    const term = random(2, 3) * 1000 + size + random(15, 20) * 1000;
-    const textChangeEventCount = Math.round(size / random(2, 3)) || 1;
-    const data = `${size} ${term} ${textChangeEventCount} ${Date.now()}`;
-    const signature = Buffer.from(
-      crypto.createHmac('sha256', this.client.state.userBreadcrumbKey)
-        .update(data)
-        .digest('hex'),
-    ).toString('base64');
-    const body = Buffer.from(data).toString('base64');
-    return `${signature}\n${body}\n`;
-  }
-
-  async send(options) {
-    const config = {
-      ...options,
-      headers: {
-        ...this.getDefaultHeaders(),
-        ...(options.headers || {})
-      }
-    };
-
-    // Handle form data
-    if (options.form) {
-      if (options.method === 'POST' || options.method === 'PUT') {
-        const formData = new URLSearchParams();
-        Object.keys(options.form).forEach(key => {
-          formData.append(key, options.form[key]);
-        });
-        config.data = formData.toString();
-      }
-    }
-
-    // Handle query parameters
-    if (options.qs) {
-      config.params = options.qs;
-    }
-
+  /**
+   * Generic request wrapper with retry and debug logging
+   * @param {Function} requestFn - async function performing request
+   * @param {number} retries - current retry count
+   */
+  async requestWithRetry(requestFn, retries = 0) {
     try {
-      const response = await this.httpClient(config);
-      this.updateState(response);
-      
-      if (response.data.status === 'ok' || response.status === 200) {
-        return { body: response.data, headers: response.headers };
-      }
-      
-      throw this.handleResponseError(response);
+      if (process.env.DEBUG) console.log(`[DEBUG] Attempt #${retries + 1}`);
+      const result = await requestFn();
+      return result;
     } catch (error) {
-      if (error.response) {
-        throw this.handleResponseError(error.response);
+      const shouldRetry =
+        (error.data?.error_type === 'server_error' ||
+         error.data?.error_type === 'rate_limited') &&
+        retries < this.maxRetries;
+
+      if (shouldRetry) {
+        const delay = 1000 * (retries + 1);
+        if (process.env.DEBUG) console.log(`[DEBUG] Retrying after ${delay}ms due to ${error.data?.error_type}`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.requestWithRetry(requestFn, retries + 1);
       }
+
       throw error;
     }
   }
 
-  updateState(response) {
-    const headers = response.headers;
+  /**
+   * Login with username/password
+   * @param {Object|string} credentialsOrUsername - { username, password } or username string
+   * @param {string} passwordArg - password (if first arg is username string)
+   */
+  async login(credentialsOrUsername, passwordArg) {
+    let username, password;
     
-    if (headers['x-ig-set-www-claim']) {
-      this.client.state.igWWWClaim = headers['x-ig-set-www-claim'];
+    // Support both object and separate parameters
+    if (typeof credentialsOrUsername === 'object' && credentialsOrUsername !== null) {
+      username = credentialsOrUsername.username;
+      password = credentialsOrUsername.password;
+    } else {
+      username = credentialsOrUsername;
+      password = passwordArg;
     }
-    if (headers['ig-set-authorization'] && !headers['ig-set-authorization'].endsWith(':')) {
-      this.client.state.authorization = headers['ig-set-authorization'];
-    }
-    if (headers['ig-set-password-encryption-key-id']) {
-      this.client.state.passwordEncryptionKeyId = headers['ig-set-password-encryption-key-id'];
-    }
-    if (headers['ig-set-password-encryption-pub-key']) {
-      this.client.state.passwordEncryptionPubKey = headers['ig-set-password-encryption-pub-key'];
+    
+    if (!username || !password) {
+      throw new Error('Username and password are required');
     }
 
-    // Update cookies from Set-Cookie headers
-    const setCookieHeaders = headers['set-cookie'];
-    if (setCookieHeaders) {
-      setCookieHeaders.forEach(cookieString => {
-        try {
-          this.client.state.cookieStore.setCookieSync(cookieString, this.client.state.constants.HOST);
-        } catch (e) {
-          // Ignore cookie parsing errors
-        }
+    // Use web login flow (more reliable than mobile API encryption)
+    return this.webLogin(username, password);
+  }
+
+  /**
+   * Web-based login flow that works with Instagram's current authentication
+   */
+  async webLogin(username, password) {
+    const WEB_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+
+    // Step 1: Get CSRF token from Instagram web
+    const preRes = await axios({
+      method: 'GET',
+      url: 'https://www.instagram.com/accounts/login/',
+      headers: { 'User-Agent': WEB_UA },
+      validateStatus: () => true,
+    });
+
+    const preCookies = preRes.headers['set-cookie'] || [];
+    const csrfMatch = preCookies.find(c => c.startsWith('csrftoken='));
+    const csrfToken = csrfMatch ? csrfMatch.split('=')[1].split(';')[0] : '';
+    const cookieStr = preCookies.map(c => c.split(';')[0]).join('; ');
+
+    // Step 2: Login via web API
+    const time = Math.floor(Date.now() / 1000);
+    const loginRes = await axios({
+      method: 'POST',
+      url: 'https://www.instagram.com/api/v1/web/accounts/login/ajax/',
+      headers: {
+        'User-Agent': WEB_UA,
+        'X-CSRFToken': csrfToken,
+        'X-Instagram-AJAX': '1',
+        'X-IG-App-ID': '936619743392459',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Referer': 'https://www.instagram.com/accounts/login/',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Cookie': cookieStr,
+      },
+      data: `username=${encodeURIComponent(username)}&enc_password=${encodeURIComponent('#PWD_INSTAGRAM_BROWSER:0:' + time + ':' + password)}&queryParams=%7B%7D&optIntoOneTap=false`,
+      validateStatus: () => true,
+    });
+
+    const body = loginRes.data;
+
+    if (body.two_factor_required) {
+      const err = new Error('Two factor authentication required');
+      err.name = 'IgLoginTwoFactorRequiredError';
+      throw err;
+    }
+    if (!body.authenticated) {
+      const err = new Error(body.message || 'Login failed - invalid credentials');
+      err.name = 'IgLoginBadPasswordError';
+      err.data = body;
+      throw err;
+    }
+
+    // Step 3: Transfer web session cookies to client state
+    const loginCookies = loginRes.headers['set-cookie'] || [];
+    const allCookies = [...preCookies, ...loginCookies];
+    for (const cookieString of allCookies) {
+      try {
+        this.client.state.cookieJar.setCookieSync(cookieString, 'https://i.instagram.com/');
+      } catch (e) {}
+      try {
+        this.client.state.cookieJar.setCookieSync(cookieString, 'https://www.instagram.com/');
+      } catch (e) {}
+    }
+
+    // Step 4: Now use the mobile API to get full user data
+    // First sync experiments to get proper mobile session  
+    try {
+      await this.syncLoginExperiments();
+    } catch (e) {}
+
+    // Get current user info via mobile API
+    try {
+      const userInfo = await this.currentUser();
+      return userInfo;
+    } catch (e) {
+      // Return basic info from web login
+      return { pk: body.userId, username: username };
+    }
+  }
+
+  /**
+   * Logout user
+   */
+  async logout() {
+    return this.requestWithRetry(async () => {
+      const response = await this.client.request.send({
+        method: 'POST',
+        url: '/api/v1/accounts/logout/',
+        form: this.client.request.sign({
+          _csrftoken: this.client.state.cookieCsrfToken,
+          _uuid: this.client.state.uuid,
+        }),
       });
-    }
+      return response.body;
+    });
   }
 
-  handleResponseError(response) {
-    const data = response.data || {};
-    
-    if (data.spam) {
-      const error = new Error('Action blocked as spam');
-      error.name = 'IgActionSpamError';
-      error.response = response;
-      return error;
-    }
-    
-    if (response.status === 404) {
-      const error = new Error('Not found');
-      error.name = 'IgNotFoundError';
-      error.response = response;
-      return error;
-    }
-    
-    if (data.message === 'challenge_required') {
-      this.client.state.checkpoint = data;
-      const error = new Error('Challenge required');
-      error.name = 'IgCheckpointError';
-      error.response = response;
-      return error;
-    }
-    
-    if (data.message === 'user_has_logged_out') {
-      const error = new Error('User has logged out');
-      error.name = 'IgUserHasLoggedOutError';
-      error.response = response;
-      return error;
-    }
-    
-    if (data.message === 'login_required') {
-      const error = new Error('Login required');
-      error.name = 'IgLoginRequiredError';
-      error.response = response;
-      return error;
-    }
-    
-    if (data.error_type === 'sentry_block') {
-      const error = new Error('Sentry block');
-      error.name = 'IgSentryBlockError';
-      error.response = response;
-      return error;
-    }
-    
-    if (data.error_type === 'inactive user') {
-      const error = new Error('Inactive user');
-      error.name = 'IgInactiveUserError';
-      error.response = response;
-      return error;
-    }
-
-    const error = new Error(data.message || 'Request failed');
-    error.name = 'IgResponseError';
-    error.response = response;
-    error.status = response.status;
-    error.data = data;
-    return error;
+  /**
+   * Get current user
+   */
+  async currentUser() {
+    return this.requestWithRetry(async () => {
+      const response = await this.client.request.send({
+        method: 'GET',
+        url: '/api/v1/accounts/current_user/',
+        qs: { edit: true },
+      });
+      return response.body;
+    });
   }
 
-  getDefaultHeaders() {
+  /**
+   * Sync login experiments (required for encryption keys)
+   */
+  async syncLoginExperiments() {
+    return this.requestWithRetry(async () => {
+      const response = await this.client.request.send({
+        method: 'POST',
+        url: '/api/v1/qe/sync/',
+        form: this.client.request.sign({
+          _csrftoken: this.client.state.cookieCsrfToken,
+          id: this.client.state.uuid,
+          server_config_retrieval: '1',
+          experiments: this.client.state.constants.LOGIN_EXPERIMENTS,
+        }),
+      });
+      return response.body;
+    });
+  }
+
+  /**
+   * Create jazoest string from input
+   * @param {string} input
+   */
+  static createJazoest(input) {
+    const buf = Buffer.from(input, 'ascii');
+    let sum = 0;
+    for (let i = 0; i < buf.byteLength; i++) {
+      sum += buf.readUInt8(i);
+    }
+    return `2${sum}`;
+  }
+
+  /**
+   * Encrypt password using Instagram's password encryption
+   * @param {string} password
+   */
+  encryptPassword(password) {
+    if (!this.client.state.passwordEncryptionPubKey) {
+      console.warn('[WARN] Password encryption key missing. Using plaintext password.');
+      return { time: Math.floor(Date.now() / 1000).toString(), encrypted: password };
+    }
+
+    const randKey = crypto.randomBytes(32);
+    const iv = crypto.randomBytes(12);
+
+    const rsaEncrypted = crypto.publicEncrypt({
+      key: Buffer.from(this.client.state.passwordEncryptionPubKey, 'base64').toString(),
+      padding: crypto.constants.RSA_PKCS1_PADDING,
+    }, randKey);
+
+    const cipher = crypto.createCipheriv('aes-256-gcm', randKey, iv);
+    const time = Math.floor(Date.now() / 1000).toString();
+    cipher.setAAD(Buffer.from(time));
+
+    const aesEncrypted = Buffer.concat([cipher.update(password, 'utf8'), cipher.final()]);
+    const sizeBuffer = Buffer.alloc(2, 0);
+    sizeBuffer.writeInt16LE(rsaEncrypted.byteLength, 0);
+    const authTag = cipher.getAuthTag();
+
+    if (process.env.DEBUG) {
+      console.log(`[DEBUG] AES length: ${aesEncrypted.length}, RSA length: ${rsaEncrypted.length}`);
+    }
+
     return {
-      'User-Agent': this.client.state.appUserAgent,
-      'X-Ads-Opt-Out': this.client.state.adsOptOut ? '1' : '0',
-      'X-IG-App-Locale': this.client.state.language,
-      'X-IG-Device-Locale': this.client.state.language,
-      'X-Pigeon-Session-Id': this.client.state.pigeonSessionId,
-      'X-Pigeon-Rawclienttime': (Date.now() / 1000).toFixed(3),
-      'X-IG-Connection-Speed': `${random(1000, 3700)}kbps`,
-      'X-IG-Bandwidth-Speed-KBPS': '-1.000',
-      'X-IG-Bandwidth-TotalBytes-B': '0',
-      'X-IG-Bandwidth-TotalTime-MS': '0',
-      'X-IG-Extended-CDN-Thumbnail-Cache-Busting-Value': this.client.state.thumbnailCacheBustingValue.toString(),
-      'X-Bloks-Version-Id': this.client.state.bloksVersionId,
-      'X-IG-WWW-Claim': this.client.state.igWWWClaim || '0',
-      'X-Bloks-Is-Layout-RTL': this.client.state.isLayoutRTL.toString(),
-      'X-IG-Connection-Type': this.client.state.connectionTypeHeader,
-      'X-IG-Capabilities': this.client.state.capabilitiesHeader,
-      'X-IG-App-ID': this.client.state.fbAnalyticsApplicationId,
-      'X-IG-Device-ID': this.client.state.uuid,
-      'X-IG-Android-ID': this.client.state.deviceId,
-      'Accept-Language': this.client.state.language.replace('_', '-'),
-      'X-FB-HTTP-Engine': 'Liger',
-      'Authorization': this.client.state.authorization,
-      'Host': 'i.instagram.com',
-      'Accept-Encoding': 'gzip, deflate',
-      'Connection': 'keep-alive',
+      time,
+      encrypted: Buffer.concat([
+        Buffer.from([1, this.client.state.passwordEncryptionKeyId || 0]),
+        iv,
+        sizeBuffer,
+        rsaEncrypted,
+        authTag,
+        aesEncrypted
+      ]).toString('base64')
     };
+  }
+
+  /**
+   * Send password recovery request to Instagram via email
+   * @param {string} query - Username, email, or phone number
+   */
+  async sendRecoveryFlowEmail(query) {
+    return this.requestWithRetry(async () => {
+      const response = await this.client.request.send({
+        url: '/api/v1/accounts/send_recovery_flow_email/',
+        method: 'POST',
+        form: this.client.request.sign({
+          _csrftoken: this.client.state.cookieCsrfToken,
+          adid: '',
+          guid: this.client.state.uuid,
+          device_id: this.client.state.deviceId,
+          query,
+        }),
+      });
+      return response.body;
+    });
+  }
+
+  /**
+   * Send password recovery request to Instagram via SMS
+   * @param {string} query - Username, email, or phone number
+   */
+  async sendRecoveryFlowSms(query) {
+    return this.requestWithRetry(async () => {
+      const response = await this.client.request.send({
+        url: '/api/v1/accounts/send_recovery_flow_sms/',
+        method: 'POST',
+        form: this.client.request.sign({
+          _csrftoken: this.client.state.cookieCsrfToken,
+          adid: '',
+          guid: this.client.state.uuid,
+          device_id: this.client.state.deviceId,
+          query,
+        }),
+      });
+      return response.body;
+    });
   }
 }
 
-module.exports = Request;
+module.exports = AccountRepository;
