@@ -14,7 +14,6 @@ class DirectThreadRepository extends Repository {
    */
   async requestWithRetry(requestFn, retries = 0) {
     try {
-      if (process.env.DEBUG) console.log(`[DEBUG] Attempt #${retries + 1}`);
       const result = await requestFn();
       return result;
     } catch (error) {
@@ -25,7 +24,6 @@ class DirectThreadRepository extends Repository {
 
       if (shouldRetry) {
         const delay = 1000 * (retries + 1);
-        if (process.env.DEBUG) console.log(`[DEBUG] Retrying after ${delay}ms due to ${error.data?.error_type}`);
         await new Promise(resolve => setTimeout(resolve, delay));
         return this.requestWithRetry(requestFn, retries + 1);
       }

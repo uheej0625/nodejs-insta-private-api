@@ -310,7 +310,6 @@ async function useMultiFileAuthState(folder) {
     await authState.saveCreds();
     await authState.saveAppState();
     
-    console.log('[useMultiFileAuthState] Credentials saved to', folder);
   };
 
   const saveMqttSession = async (realtimeClient) => {
@@ -353,7 +352,6 @@ async function useMultiFileAuthState(folder) {
     authState.data.seqIds = seqIds;
 
     await authState.saveMqttState();
-    console.log('[useMultiFileAuthState] MQTT session saved to', folder);
   };
 
   const loadCreds = async (igClient) => {
@@ -363,12 +361,10 @@ async function useMultiFileAuthState(folder) {
     }
 
     if (!authState.hasValidSession()) {
-      console.log('[useMultiFileAuthState] No valid session found');
       return false;
     }
 
     await applyStateData(igClient.state, authState);
-    console.log('[useMultiFileAuthState] Credentials loaded from', folder);
     return true;
   };
 
@@ -392,7 +388,6 @@ async function useMultiFileAuthState(folder) {
 
   const clearSession = async () => {
     await authState.clearAll();
-    console.log('[useMultiFileAuthState] Session cleared');
   };
 
   const isSessionValid = async (igClient) => {

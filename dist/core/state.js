@@ -365,7 +365,6 @@ class State {
         : this.cookieJar.getCookies(this.constants.HOST);
       if (Array.isArray(cookies)) {
         for (const c of cookies) {
-          console.log(`- ${c.key}=${c.value}`);
         }
         return cookies;
       }
@@ -376,14 +375,6 @@ class State {
   }
 
   logStateSummary() {
-    console.log('--- State Summary ---');
-    console.log(`Device ID: ${this.deviceId}`);
-    console.log(`UUID: ${this.uuid}`);
-    console.log(`User Agent: ${this.appUserAgent}`);
-    console.log(`Language: ${this.language}`);
-    console.log(`Timezone Offset: ${this.timezoneOffset}`);
-    console.log(`Authorization: ${this.authorization ? 'Present' : 'Missing'}`);
-    console.log('----------------------');
   }
 
   //

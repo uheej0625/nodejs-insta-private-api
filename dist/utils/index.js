@@ -244,9 +244,6 @@ class Utils {
   }
 
   static debugLog(message) {
-    if (process.env.DEBUG === 'true') {
-      console.log(`[DEBUG] ${new Date().toISOString()} - ${message}`);
-    }
   }
 
   static generateAndroidDevice() {

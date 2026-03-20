@@ -137,9 +137,6 @@ class IgApiClient extends EventEmitter {
     let lastErr;
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        if (this.state.verbose) {
-          console.log(`[Retry] attempt ${attempt + 1}/${retries + 1}`);
-        }
         const res = await fn();
         return res;
       } catch (err) {
@@ -178,7 +175,6 @@ class IgApiClient extends EventEmitter {
     // Ensure JSON string
     const json = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
     await fs.promises.writeFile(p, json, { mode: 0o600 });
-    if (this.state.verbose) console.log('[Session] Saved session to', p);
     return p;
   }
 
@@ -200,7 +196,6 @@ class IgApiClient extends EventEmitter {
       throw e;
     }
     await this.loadSession(sessionObj);
-    if (this.state.verbose) console.log('[Session] Loaded session from', p);
     return true;
   }
 

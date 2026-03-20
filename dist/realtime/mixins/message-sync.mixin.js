@@ -14,11 +14,9 @@ class MessageSyncMixin extends mixin_1.Mixin {
     }
 
     apply(client) {
-        console.log(`\n[MESSAGE_SYNC MIXIN] Applying mixin...`);
         
         (0, mixin_1.hook)(client, 'connect', {
             post: async () => {
-                console.log(`[MESSAGE_SYNC] Post-connect hook called`);
                 
                 let retries = 0;
                 while (!client.mqtt && retries < 50) {
@@ -29,10 +27,8 @@ class MessageSyncMixin extends mixin_1.Mixin {
                     throw new mqtts_1.IllegalStateError('No mqtt client created after retries');
                 }
                 
-                console.log(`[MESSAGE_SYNC] MQTT ready, registering listen() on topic 146 (MESSAGE_SYNC)`);
                 
                 if (client.mqtt.listen) {
-                    console.log(`[MESSAGE_SYNC] mqtt.listen() method found, registering callback...`);
                     client.mqtt.listen({
                         topic: constants_1.Topics.MESSAGE_SYNC.id,
                         transformer: async ({ payload }) => {
@@ -45,7 +41,6 @@ class MessageSyncMixin extends mixin_1.Mixin {
                         this.handleMessageSync(client, data);
                     });
                 } else {
-                    console.log(`[MESSAGE_SYNC] mqtt.listen() NOT FOUND - using fallback 'receive' event`);
                     client.on('receive', (topic, messages) => {
                         if (topic.id === constants_1.Topics.MESSAGE_SYNC.id) {
                             const data = messages.map(m => m.data);
@@ -276,7 +271,6 @@ class MessageSyncMixin extends mixin_1.Mixin {
 
     async handleMessageSync(client, syncData) {
         if (!syncData || !Array.isArray(syncData)) {
-            console.log(`[MESSAGE_SYNC] No sync data received`);
             return;
         }
 
@@ -326,7 +320,6 @@ class MessageSyncMixin extends mixin_1.Mixin {
                             rawData: msgValue
                         };
                         
-                        console.log(this.formatMessageForConsole(msgData));
                         
                         const parsedMessage = {
                             ...element,
@@ -342,7 +335,6 @@ class MessageSyncMixin extends mixin_1.Mixin {
                         client.emit('message', parsedMessage);
                         
                     } catch (err) {
-                        console.log(`[MESSAGE_SYNC] Parse error: ${err.message}`);
                     }
                 } else {
                     try {
@@ -357,7 +349,6 @@ class MessageSyncMixin extends mixin_1.Mixin {
                             update: updateValue,
                         });
                     } catch (err) {
-                        console.log(`[MESSAGE_SYNC] Thread update parse error: ${err.message}`);
                     }
                 }
             }
