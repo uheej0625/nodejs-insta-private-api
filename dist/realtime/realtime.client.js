@@ -53,12 +53,9 @@ class RealtimeClient extends eventemitter3_1.EventEmitter {
      */
     async startRealTimeListener(options = {}) {
         try {
-            console.log('[REALTIME] Starting Real-Time Listener...');
             
-            console.log('[REALTIME] Fetching inbox (IRIS data)...');
             const inboxData = await this.ig.direct.getInbox();
             
-            console.log('[REALTIME] Connecting to MQTT with IRIS subscription...');
             await this.connect({
                 graphQlSubs: [
                     'ig_sub_direct',
@@ -71,11 +68,6 @@ class RealtimeClient extends eventemitter3_1.EventEmitter {
                 irisData: inboxData
             });
             
-            console.log('[REALTIME] MQTT Connected with IRIS');
-            console.log('----------------------------------------');
-            console.log('[REALTIME] Real-Time Listener ACTIVE');
-            console.log('[REALTIME] Waiting for messages...');
-            console.log('----------------------------------------');
             
             this._setupMessageHandlers();
             
@@ -319,14 +311,11 @@ class RealtimeClient extends eventemitter3_1.EventEmitter {
         } else {
             // Auto-fetch irisData if not provided
             try {
-                console.log('[REALTIME] Auto-fetching IRIS data...');
                 const autoIrisData = await this.ig.direct.getInbox();
                 if (autoIrisData) {
                     await this.irisSubscribe(autoIrisData);
-                    console.log('[REALTIME] IRIS subscription successful');
                 }
             } catch (e) {
-                console.log('[REALTIME] Could not auto-fetch IRIS data:', e.message);
             }
         }
         if ((this.initOptions.skywalkerSubs ?? []).length > 0) {
@@ -358,7 +347,6 @@ class RealtimeClient extends eventemitter3_1.EventEmitter {
             throw new Error('authStateHelper is required - use useMultiFileAuthState()');
         }
 
-        console.log('[RealtimeClient] Connecting from saved session...');
 
         const savedOptions = authStateHelper.getMqttConnectOptions?.();
         
@@ -369,18 +357,12 @@ class RealtimeClient extends eventemitter3_1.EventEmitter {
             ...options
         };
 
-        console.log('[RealtimeClient] Using saved subscriptions:', {
-            graphQlSubs: connectOptions.graphQlSubs,
-            skywalkerSubs: connectOptions.skywalkerSubs,
-            hasIrisData: !!connectOptions.irisData
-        });
 
         await this.connect(connectOptions);
 
         if (authStateHelper.saveMqttSession) {
             try {
                 await authStateHelper.saveMqttSession(this);
-                console.log('[RealtimeClient] MQTT session saved after connect');
             } catch (e) {
                 console.warn('[RealtimeClient] Failed to save MQTT session:', e.message);
             }

@@ -700,11 +700,9 @@ class Utils {
   }
 
   static logRed(...args) {
-    console.log(this.colorize(args.map(String).join(' '), 'red'));
   }
 
   static logGreen(...args) {
-    console.log(this.colorize(args.map(String).join(' '), 'green'));
   }
 
   /* -------------------------

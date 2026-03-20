@@ -84,9 +84,6 @@ class RealtimeService extends EventEmitter {
       const brokerUrl = `${this.protocol}://${this.broker}:${this.port}`;
       
       if (this.client.state.verbose) {
-        console.log(`[Realtime] Connecting to MQTT broker: ${brokerUrl}`);
-        console.log(`[Realtime] Client ID: ${this.clientId}`);
-        console.log(`[Realtime] Username: ${this.username}`);
       }
 
       // Create MQTT connection
@@ -134,9 +131,6 @@ class RealtimeService extends EventEmitter {
    */
   disconnect() {
     if (this.mqttClient && this.isConnected) {
-      if (this.client.state.verbose) {
-        console.log('[Realtime] Disconnecting from MQTT broker...');
-      }
       
       this.mqttClient.end();
       this.isConnected = false;
@@ -157,9 +151,6 @@ class RealtimeService extends EventEmitter {
    */
   ping() {
     if (this.isRealtimeConnected()) {
-      if (this.client.state.verbose) {
-        console.log('[Realtime] Sending ping...');
-      }
       // MQTT client handles ping automatically through keepalive
       // But we can emit an event for debugging
       this.emit('ping');
@@ -200,9 +191,6 @@ class RealtimeService extends EventEmitter {
     this.isConnected = true;
     this.reconnectAttempts = 0;
     
-    if (this.client.state.verbose) {
-      console.log('[Realtime] Connected to MQTT broker');
-    }
 
     // Subscribe to all topics
     this._subscribeToTopics();
@@ -219,9 +207,6 @@ class RealtimeService extends EventEmitter {
     try {
       const message = payload.toString();
       
-      if (this.client.state.verbose) {
-        console.log(`[Realtime] Received message on ${topic}: ${message}`);
-      }
 
       // Find the topic configuration
       const topicConfig = this._findTopicByPath(topic);
@@ -333,9 +318,6 @@ class RealtimeService extends EventEmitter {
   _onClose() {
     this.isConnected = false;
     
-    if (this.client.state.verbose) {
-      console.log('[Realtime] MQTT connection closed');
-    }
     
     this.emit('disconnected');
     
@@ -352,9 +334,6 @@ class RealtimeService extends EventEmitter {
   _onOffline() {
     this.isConnected = false;
     
-    if (this.client.state.verbose) {
-      console.log('[Realtime] MQTT client offline');
-    }
     
     this.emit('offline');
   }
@@ -364,9 +343,6 @@ class RealtimeService extends EventEmitter {
    * @private
    */
   _onReconnect() {
-    if (this.client.state.verbose) {
-      console.log('[Realtime] MQTT client reconnecting...');
-    }
     
     this.emit('reconnecting');
   }
@@ -387,9 +363,6 @@ class RealtimeService extends EventEmitter {
             console.error(`[Realtime] Failed to subscribe to ${topic.path}:`, err.message);
           }
         } else {
-          if (this.client.state.verbose) {
-            console.log(`[Realtime] Subscribed to ${topic.path}`);
-          }
         }
       });
     });
@@ -407,9 +380,6 @@ class RealtimeService extends EventEmitter {
     this.reconnectAttempts++;
     const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1); // Exponential backoff
     
-    if (this.client.state.verbose) {
-      console.log(`[Realtime] Scheduling reconnect in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-    }
     
     setTimeout(() => {
       if (this.reconnectAttempts <= this.maxReconnectAttempts) {
